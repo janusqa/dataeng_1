@@ -9,7 +9,7 @@ def wait_for_postgres(host, max_retries=5, delay_seconds=5):
         try:
             result = subprocess.run(["pg_isready", "-h", host], check=True, capture_output=True, text=True)
             if "accepting connections" in result.stdout:
-                print ("Successfully connected to Postgres")
+                print (f"Successfully connected to Postgres Host {host}")
                 return True
         except subprocess.CalledProcessError as e:
             print(f"Error connecting to postgres: {e}")
@@ -19,10 +19,10 @@ def wait_for_postgres(host, max_retries=5, delay_seconds=5):
     print ("Max retries reached. Exiting...")
     return False
 
-if not wait_for_postgres(host="source_db"):
-    exit(1)
+source_up = wait_for_postgres(host="source_db")
+destination_up = wait_for_postgres(host="destination_db")
 
-if not wait_for_postgres(host="destination_db"):
+if not(source_up and destination_up):
     exit(1)
 
 print ("Starting ETL Script...")
@@ -50,20 +50,18 @@ dump_command = [
     '-w'
 ]
 
-subprocess_env = dict(PGPASSWORD=source_config['password'])
-
-subprocess.run(dump_command, env=subprocess_env, check = True)
-
 load_command = [
     'psql',
     '-h', destination_config['host'],
     '-U', destination_config['user'],
     '-d', destination_config['dbname'],
-    '-a','-f', 'data_dump.sql',
+    '-f', 'data_dump.sql'
 ]
 
-subprocess_env = dict(PGPASSWORD=destination_config['password'])
+subprocess_source_env = dict(PGPASSWORD=source_config['password'])
+subprocess.run(dump_command, env=subprocess_source_env, check = True)
 
-subprocess.run(load_command, env=subprocess_env, check = True)
+subprocess_destination_env = dict(PGPASSWORD=destination_config['password'])
+subprocess.run(load_command, env=subprocess_destination_env, check = True)
 
 print ("Ending ETL Script...")
