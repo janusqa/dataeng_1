@@ -1,45 +1,45 @@
-{% MACRO GENERATE_FILE_RATINGS() %}
+{% macro generate_film_ratings() %}
 
-WITH FILMS_WITH_RATINGS AS (
+WITH films_with_ratings AS (
     SELECT
-        FILM_ID,
-        TITLE,
-        RELEASE_DATE,
-        PRICE,
-        RATING,
-        USER_RATING,
+        film_id,
+        title,
+        release_date,
+        price,
+        rating,
+        user_rating,
         CASE
-            WHEN USER_RATING >= 4.5 THEN
+            WHEN user_rating >= 4.5 THEN
                 'Excellent'
-            WHEN USER_RATING >=4.0 THEN
+            WHEN user_rating >=4.0 THEN
                 'Good'
-            WHEN USER_RATING >= 3.0 THEN
+            WHEN user_rating >= 3.0 THEN
                 'Average'
             ELSE
                 'Poor'
-        END AS RATING_CATEGORY
+        END AS rating_category
     FROM
-        {{ REF('films') }}
-), FILMS_WITH_ACTORS AS (
+        {{ ref('films') }}
+), films_with_actors AS (
     SELECT
-        F.FILM_ID,
-        F.TITLE,
-        STRING_AGG(A.ACTOR_NAME,
-        ',') AS ACTORS
+        f.film_id,
+        f.title,
+        string_agg(a.actor_name,
+        ',') AS actors
     FROM
-        {{ REF('films') }} F
-        LEFT JOIN {{ REF('film_actors') }} FA
-        ON F.FILM_ID = FA.FILM_ID
-        LEFT JOIN {{ REF('actors') }} A
-        ON FA.ACTOR_ID = A.ACTOR_ID
+        {{ ref('films') }} f
+        LEFT JOIN {{ ref('film_actors') }} fa
+        ON f.film_id = fa.film_id
+        LEFT JOIN {{ ref('actors') }} a
+        ON fa.actor_id = a.actor_id
     GROUP BY
-        F.FILM_ID,
-        F.TITLE
+        f.film_id,
+        f.title
 )
 SELECT
-    FWR.*,
-    FWA.ACTORS
+    fwr.*,
+    fwa.actors
 FROM
-    FILMS_WITH_RATINGS FWR
-    LEFT JOIN FILMS_WITH_ACTORS FWA
-    ON FWR.FILM_ID = FWA.FILM_ID {% ENDMACRO %}
+    films_with_ratings fwr
+    LEFT JOIN films_with_actors fwa
+    ON fwr.film_id = fwa.film_id {% endmacro %}
