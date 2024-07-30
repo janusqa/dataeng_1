@@ -33,6 +33,6 @@ clean-targets:         # directories to be removed by `dbt clean`
 models:
   custom_postgres:
     # Config indicated by + and applies to all files under models/example/
-    example:
+    movies:
       # +materialized: view
       +materialized: table
