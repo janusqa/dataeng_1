@@ -14,6 +14,11 @@ services:
         volumes:
             - ./volumes/postgres/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
             # - ./volumes/postgres/data_source:/var/lib/postgresql/data_source
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+            interval: 10s
+            timeout: 5s
+            retries: 5
         networks:
             - local-freecodecamp-dev
 
@@ -30,54 +35,151 @@ services:
         # No volumes for destination db. We do not want to persist data here
         # volumes:
         #     - ./volumes/postgres/data_destination:/var/lib/postgresql/data_destination
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+            interval: 10s
+            timeout: 5s
+            retries: 5
         networks:
             - local-freecodecamp-dev
 
-    etl_script:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        # command: ['python', 'etl_script.py']
-        depends_on:
-            - source_db
-            - destination_db
-        networks:
-            - local-freecodecamp-dev
-
-    dbt:
-        image: ghcr.io/dbt-labs/dbt-postgres:latest
-        depends_on:
-            etl_script:
-                condition: service_completed_successfully
-        command: ['run', '--profiles-dir', '/root', '--project-dir', '/dbt']
-        environment:
-            DBT_PROFILE: default
-            DBT_TARGET: dev
-        volumes:
-            - ./custom_postgres:/dbt
-            - ~/.dbt:/root
-        networks:
-            - local-freecodecamp-dev
-
-    # PGADMIN4 NO LONGER WORKS. USE DBEAVER https://dbeaver.io/download/
-
-    # reverseproxy:
-    #     image: jwilder/nginx-proxy:latest
+    ## Not needed. Handled by airflow
+    # etl_script:
+    #     build:
+    #         context: .
+    #         dockerfile: Dockerfile.etl_script
     #     depends_on:
-    #         - pgadmin
-    #         - postgres_db
-    #     ports:
-    #         - 8080:80
-    #         - 4434:443
-    #     volumes:
-    #         - /var/run/docker.sock:/tmp/docker.sock:ro
-    #         - ./volumes/reverseproxy/certs:/etc/nginx/certs:ro
-    #         - ./volumes/reverseproxy/certs/dhparam.pem:/etc/nginx/dhparam/dhparam.pem:ro
-    #         - ./volumes/reverseproxy/logs:/var/log/nginx:rw
-    #         - ./volumes/reverseproxy/vhost:/ect/nginx/vhost.d:rw
-    #         - ./volumes/reverseproxy/html:/usr/share/nginx/html:rw
+    #         source_db:
+    #             condition: service_healthy
+    #         destination_db:
+    #             condition: service_healthy
     #     networks:
     #         - local-freecodecamp-dev
 
+    ## Not needed. Handled by airflow
+    # dbt:
+    #     image: ghcr.io/dbt-labs/dbt-postgres:latest
+    #     depends_on:
+    #         etl_script:
+    #             condition: service_completed_successfully
+    #         destination_db:
+    #             condition: service_healthy
+    #     command: ['run', '--profiles-dir', '/root', '--project-dir', '/dbt']
+    #     environment:
+    #         DBT_PROFILE: default
+    #         DBT_TARGET: dev
+    #     volumes:
+    #         - ./custom_postgres:/dbt
+    #         - ~/.dbt:/root
+    #     networks:
+    #         - local-freecodecamp-dev
+
+    # PGADMIN4 NO LONGER WORKS. USE DBEAVER https://dbeaver.io/download/
+
+    airflow_db:
+        image: postgres:15.6 # using older verison to be compatible with the python service
+        restart: always
+        ports:
+            - 5435:5432
+        environment:
+            NETWORK_ACCESS: internal
+            POSTGRES_DB: airflow
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+        # No volumes for destination db. We do not want to persist data here
+        # volumes:
+        #     - ./volumes/postgres/data_destination:/var/lib/postgresql/data_destination
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        networks:
+            - local-freecodecamp-dev
+
+    airflow_init:
+        image: apache/airflow:latest
+        depends_on:
+            airflow_db:
+                condition: service_healthy
+        environment:
+            AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@airflow_db/airflow
+        command: >
+            bash -c "airflow db migrate && airflow users create --username ${POSTGRES_USER} --password ${POSTGRES_PASSWORD} --firstname John --lastname Doe --role Admin --email john.doe@example.com"
+        networks:
+            - local-freecodecamp-dev
+
+    airflow_ui:
+        build:
+            context: .
+            dockerfile: Dockerfile.airflow_ui
+        depends_on:
+            airflow_db:
+                condition: service_healthy
+            airflow_init:
+                condition: service_completed_successfully
+        environment:
+            LOAD_EX: n
+            EXECUTOR: local
+            AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@airflow_db/airflow
+            AIRFLOW__CORE__FERNET_KEY: ${SECRET_KEY} # $ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" to get FERNET KEY
+            AIRFLOW__WEBSERVER__DEFAULT__USER_USERNAME: ${POSTGRES_USER}
+            AIRFLOW__WEBSERVER__DEFAULT__USER_PASSWORD: ${POSTGRES_PASSWORD}
+            AIRFLOW__WWW__USER_USERNAME: ${POSTGRES_USER}
+            AIRFLOW__WWW__USER_PASSWORD: ${POSTGRES_PASSWORD}
+            AIRFLOW__WEBSERVER__SECRET_KEY: ${SECRET_KEY}
+            DOCKER_HOST_DBT_DIR: ${DOCKER_HOST_DBT_DIR}
+            DOCKER_HOST_PROJECT_DBT_DIR: ${DOCKER_HOST_PROJECT_DBT_DIR}
+        user: root
+        volumes:
+            - ./airflow/dags:/opt/airflow/dags
+            - ./etl_script:/opt/airflow/etl
+            - ./custom_postgres:/opt/dbt
+            - ~/.dbt:/root/.dbt
+            - /var/run/docker.sock:/var/run/docker.sock
+        ports:
+            - 8080:8080
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        command: webserver
+        networks:
+            - local-freecodecamp-dev
+
+    airflow_scheduler:
+        build:
+            context: .
+            dockerfile: Dockerfile.airflow_ui
+        depends_on:
+            airflow_db:
+                condition: service_healthy
+            airflow_init:
+                condition: service_completed_successfully
+        environment:
+            LOAD_EX: n
+            EXECUTOR: local
+            AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@airflow_db/airflow
+
+            AIRFLOW__CORE__FERNET_KEY: ${SECRET_KEY} # $ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" to get FERNET KEY
+            AIRFLOW__WEBSERVER__DEFAULT__USER_USERNAME: ${POSTGRES_USER}
+            AIRFLOW__WEBSERVER__DEFAULT__USER_PASSWORD: ${POSTGRES_PASSWORD}
+            AIRFLOW__WWW__USER_USERNAME: ${POSTGRES_USER}
+            AIRFLOW__WWW__USER_PASSWORD: ${POSTGRES_PASSWORD}
+            AIRFLOW__WEBSERVER__SECRET_KEY: ${SECRET_KEY}
+            DOCKER_HOST_DBT_DIR: ${DOCKER_HOST_DBT_DIR}
+            DOCKER_HOST_PROJECT_DBT_DIR: ${DOCKER_HOST_PROJECT_DBT_DIR}
+        user: root
+        volumes:
+            - ./airflow/dags:/opt/airflow/dags
+            - ./etl_script:/opt/airflow/etl
+            - ./custom_postgres:/opt/dbt
+            - ~/.dbt:/root/.dbt
+            - /var/run/docker.sock:/var/run/docker.sock
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        command: scheduler
+        networks:
+            - local-freecodecamp-dev
+
 networks:
     local-freecodecamp-dev:
+        driver: bridge

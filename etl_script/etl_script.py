@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import subprocess
 import time
 
@@ -24,8 +25,6 @@ destination_up = wait_for_postgres(host="destination_db")
 
 if not(source_up and destination_up):
     exit(1)
-
-print ("Starting ETL Script...")
 
 source_config ={
     "dbname": "source_db",
@@ -58,10 +57,18 @@ load_command = [
     '-f', 'data_dump.sql'
 ]
 
-subprocess_source_env = dict(PGPASSWORD=source_config['password'])
-subprocess.run(dump_command, env=subprocess_source_env, check = True)
+try:
+    print ("Starting ETL Script...")
 
-subprocess_destination_env = dict(PGPASSWORD=destination_config['password'])
-subprocess.run(load_command, env=subprocess_destination_env, check = True)
+    subprocess_source_env = dict(PGPASSWORD=source_config['password'])
+    subprocess.run(dump_command, env=subprocess_source_env, check = True)
 
-print ("Ending ETL Script...")
+    subprocess_destination_env = dict(PGPASSWORD=destination_config['password'])
+    subprocess.run(load_command, env=subprocess_destination_env, check = True)
+
+    print ("Ending ETL Script...")
+    
+except Exception as ex:
+    print (f"Ending ETL Script with errors {str(ex)}...")
+
+
